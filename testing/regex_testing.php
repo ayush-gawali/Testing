@@ -4,10 +4,53 @@ require_once __DIR__ . '/../config/database.php';
 
 // ---------- Part A: interactive tester ----------
 $rules = covicare_rules();
-$tField = $_GET['field'] ?? 'email';
-$tValue = $_GET['value'] ?? '';
+$tField = 'email';
+$tValue = '';
 $tResult = null;
-if (isset($_GET['field']) && isset($rules[$tField])) $tResult = validate_field($tField, $tValue);
+
+// Keep interactive test history in the user's session. Each submitted test
+// is appended once, and the row number is generated from the history length.
+if (!isset($_SESSION['interactive_test_history']) || !is_array($_SESSION['interactive_test_history'])) {
+    $_SESSION['interactive_test_history'] = [];
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_interactive_test'])) {
+    $tField = $_POST['field'] ?? 'email';
+    $tValue = trim($_POST['value'] ?? '');
+
+    if (!csrf_ok()) {
+        flash('error', 'Invalid request. Please try the test again.');
+        redirect('testing/regex_testing.php');
+    }
+
+    if (isset($rules[$tField])) {
+        $tResult = validate_field($tField, $tValue);
+        $_SESSION['interactive_test_history'][] = [
+            'field' => $tField,
+            'input' => $tValue,
+            'actual' => $tResult,
+            'tested_at' => date('Y-m-d H:i:s'),
+        ];
+    } else {
+        flash('error', 'Please select a valid field.');
+    }
+
+    // Post/Redirect/Get prevents the browser refresh from adding the same row again.
+    $_SESSION['last_interactive_test'] = [
+        'field' => $tField,
+        'value' => $tValue,
+        'result' => $tResult,
+    ];
+    redirect('testing/regex_testing.php');
+}
+
+$lastTest = $_SESSION['last_interactive_test'] ?? null;
+if ($lastTest) {
+    $tField = $lastTest['field'];
+    $tValue = $lastTest['value'];
+    $tResult = $lastTest['result'];
+}
+$interactiveHistory = $_SESSION['interactive_test_history'];
 
 // ---------- Part B: automatic test cases ----------
 // Each case: [field, input, expected pass (true/false), category, description]
@@ -99,7 +142,7 @@ include __DIR__ . '/../includes/header.php';
 ?>
 <h2 style="margin-top:0">Regex Validation Tester</h2>
 <div class="form-box wide" style="margin:0 0 10px">
-  <form method="get">
+  <form method="post">\n    <?= csrf_field() ?>\n    <input type="hidden" name="run_interactive_test" value="1">
     <div class="field"><label for="field">Field</label>
       <select id="field" name="field"><?php foreach ($rules as $k => $r): ?><option value="<?= e($k) ?>" <?= $k === $tField ? 'selected' : '' ?>><?= e($k) ?></option><?php endforeach; ?></select></div>
     <div class="field"><label for="value">Sample input</label><input type="text" id="value" name="value" value="<?= e($tValue) ?>"></div>
@@ -111,6 +154,25 @@ include __DIR__ . '/../includes/header.php';
     <small>Pattern: <code><?= e($rules[$tField]['pattern']) ?></code></small>
   <?php endif; ?>
 </div>
+
+<h2>Interactive Test History</h2>
+<p>Every time you click <strong>Test Input</strong>, the result is added here. The serial number updates automatically.</p>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>Field</th><th>Input</th><th>Actual Result</th><th>Tested At</th></tr>
+  <?php if (empty($interactiveHistory)): ?>
+    <tr><td colspan="5">No interactive tests have been run yet.</td></tr>
+  <?php else: ?>
+    <?php foreach ($interactiveHistory as $i => $r): ?>
+    <tr>
+      <td><?= $i + 1 ?></td>
+      <td><?= e($r['field']) ?></td>
+      <td><code><?= e(mb_strlen($r['input']) > 30 ? mb_substr($r['input'], 0, 30) . '... (' . mb_strlen($r['input']) . ' chars)' : $r['input']) ?></code></td>
+      <td><span class="badge <?= $r['actual'] ? 'PASS' : 'FAIL' ?>"><?= $r['actual'] ? 'Accepted' : 'Rejected' ?></span></td>
+      <td><?= e($r['tested_at']) ?></td>
+    </tr>
+    <?php endforeach; ?>
+  <?php endif; ?>
+</table></div>
 
 <h2>Automated Test Results</h2>
 <div class="grid">
